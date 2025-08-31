@@ -1,5 +1,5 @@
+import RecordingControls from "@/components/RecordingControls";
 import FFmpegModule from "@/specs/NativeFFmpegModule";
-import FFmpeg from "@/utils/FFmpeg";
 import { saveVideoToGallery } from "@/utils/videoProcessing";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
@@ -12,8 +12,6 @@ import {
   Dimensions,
   Platform,
   StyleSheet,
-  Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -23,6 +21,7 @@ import {
   useCameraDevice,
   useCameraPermission,
 } from "react-native-vision-camera";
+import * as VideoThumbnails from "expo-video-thumbnails";
 
 const { width, height } = Dimensions.get("window");
 
@@ -37,7 +36,7 @@ export default function HomeScreen() {
 
   const recordButtonScale = useSharedValue(1);
 
-  const [video, setVideo] = useState<MediaLibrary.Asset | null>(null);
+  // const [video, setVideo] = useState<MediaLibrary.Asset | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -48,23 +47,23 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  const pickVideo = async () => {
-    // Get all videos from media library
-    const media = await MediaLibrary.getAssetsAsync({
-      mediaType: MediaLibrary.MediaType.video,
-      first: 1, // limit to 1 for demo
-      sortBy: [[MediaLibrary.SortBy.creationTime, false]], // latest video
-    });
+  // const pickVideo = async () => {
+  //   // Get all videos from media library
+  //   const media = await MediaLibrary.getAssetsAsync({
+  //     mediaType: MediaLibrary.MediaType.video,
+  //     first: 1, // limit to 1 for demo
+  //     sortBy: [[MediaLibrary.SortBy.creationTime, false]], // latest video
+  //   });
 
-    if (media.assets.length > 0) {
-      setVideo(media.assets[0]);
-      console.log("video data---", media.assets[0]); // pick the first video
-      console.log(
-        "video data---",
-        FFmpegModule.getVideoMetaData(media.assets[0].uri)
-      ); // pick the first video
-    }
-  };
+  //   if (media.assets.length > 0) {
+  //     setVideo(media.assets[0]);
+  //     console.log("video data---", media.assets[0]); // pick the first video
+  //     console.log(
+  //       "video data---",
+  //       FFmpegModule.getVideoMetaData(media.assets[0].uri)
+  //     ); // pick the first video
+  //   }
+  // };
 
   // Handle app state changes
   useEffect(() => {
@@ -116,116 +115,43 @@ export default function HomeScreen() {
 
       await cameraRef.current.startRecording({
         onRecordingFinished: async (video) => {
-          console.log("Recording finished. Video details:", {
-            path: video.path,
-            duration: video.duration,
-          });
-
           try {
-            // Ask user what to do: mute, trim, or both
-            Alert.alert("Process Video", "Choose an action for your video:", [
-              {
-                text: "Mute Only",
-                onPress: () => {
-                  (async () => {
-                    try {
-                      console.log("[Alert] Mute Only selected");
-                      const outputPath = `${
-                        FileSystem.cacheDirectory
-                      }muted_${Date.now()}.mp4`;
-                      await FFmpeg.trimVideoAndMute(
-                        video.path,
-                        outputPath,
-                        0,
-                        Math.floor(video.duration)
-                      );
-                      console.log(
-                        "[Alert] Mute Only: Processing done, saving to gallery",
-                        outputPath
-                      );
-                      await saveVideoToGallery(outputPath);
-                      Alert.alert("Success", "Muted video saved to gallery");
-                    } catch (err) {
-                      console.error("[Alert] Mute Only error:", err);
-                      Alert.alert("Error", "Failed to mute and save video");
-                    } finally {
-                      setIsRecording(false);
-                    }
-                  })();
-                },
-              },
-              {
-                text: "Trim Only",
-                onPress: () => {
-                  (async () => {
-                    try {
-                      console.log("[Alert] Trim Only selected");
-                      const outputPath = `${
-                        FileSystem.cacheDirectory
-                      }trimmed_${Date.now()}.mp4`;
-                      await FFmpeg.trimVideo(
-                        video.path,
-                        outputPath,
-                        0,
-                        Math.max(1, Math.floor(video.duration - 2))
-                      );
-                      console.log(
-                        "[Alert] Trim Only: Processing done, saving to gallery",
-                        outputPath
-                      );
-                      await saveVideoToGallery(outputPath);
-                      Alert.alert("Success", "Trimmed video saved to gallery");
-                    } catch (err) {
-                      console.error("[Alert] Trim Only error:", err);
-                      Alert.alert("Error", "Failed to trim and save video");
-                    } finally {
-                      setIsRecording(false);
-                    }
-                  })();
-                },
-              },
-              {
-                text: "Trim & Mute",
-                onPress: () => {
-                  (async () => {
-                    try {
-                      console.log("[Alert] Trim & Mute selected");
-                      const outputPath = `${
-                        FileSystem.cacheDirectory
-                      }processed_${Date.now()}.mp4`;
-                      await FFmpeg.trimVideoAndMute(
-                        video.path,
-                        outputPath,
-                        0,
-                        Math.max(1, Math.floor(video.duration - 2))
-                      );
-                      console.log(
-                        "[Alert] Trim & Mute: Processing done, saving to gallery",
-                        outputPath
-                      );
-                      await saveVideoToGallery(outputPath);
-                      Alert.alert(
-                        "Success",
-                        "Trimmed & muted video saved to gallery"
-                      );
-                    } catch (err) {
-                      console.error("[Alert] Trim & Mute error:", err);
-                      Alert.alert(
-                        "Error",
-                        "Failed to trim/mute and save video"
-                      );
-                    } finally {
-                      setIsRecording(false);
-                    }
-                  })();
-                },
-                style: "default",
-              },
-              { text: "Cancel", style: "cancel" },
-            ]);
-          } catch (error) {
-            console.error("Failed to process/save video:", error);
-            Alert.alert("Error", "Failed to process or save video");
+            // Step 1: Trim the first 3 seconds using trimVideo
+            const trimmedPath = `${
+              FileSystem.cacheDirectory
+            }trimmed_${Date.now()}.mp4`;
+            const start = 3;
+            const duration = Math.max(1, Math.floor(video.duration - 3));
+            const trimSuccess = FFmpegModule.trimVideo(
+              video.path,
+              trimmedPath,
+              start,
+              duration
+            );
+            if (!trimSuccess) throw new Error("Trimming failed");
+
+            // Step 2: Mute the trimmed video
+            const mutedPath = `${
+              FileSystem.cacheDirectory
+            }muted_${Date.now()}.mp4`;
+            const muteSuccess = FFmpegModule.muteVideo(trimmedPath, mutedPath);
+            if (!muteSuccess) throw new Error("Muting failed");
+
+            // Step 3: Save to gallery
+            await saveVideoToGallery(mutedPath);
+
+            // Step 4: Generate thumbnail
+            const { uri: thumbnailUri } =
+              await VideoThumbnails.getThumbnailAsync(mutedPath, { time: 0 });
+
+            Alert.alert(
+              "Success",
+              "Video processed, saved, and thumbnail generated!"
+            );
+            // Optionally, set state to show thumbnailUri
+          } catch (err) {
+            console.error("Video processing error:", err);
+            Alert.alert("Error", "Failed to process video");
           } finally {
             setIsRecording(false);
           }
@@ -276,7 +202,7 @@ export default function HomeScreen() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <StatusBar style="light" />
-      <View style={{ padding: 30 }}>
+      {/* <View style={{ padding: 30 }}>
         <Text style={{ fontSize: 30, color: "red" }}>
           {FFmpegModule.getFFmpegVersion()}
         </Text>
@@ -287,8 +213,8 @@ export default function HomeScreen() {
         y
       >
         <Text>Pick Video</Text>
-      </TouchableOpacity>
-      {/* <View style={styles.cameraContainer}>
+      </TouchableOpacity> */}
+      <View style={styles.cameraContainer}>
         {hasPermission && device && (
           <Camera
             ref={cameraRef}
@@ -321,7 +247,7 @@ export default function HomeScreen() {
             onRecordingComplete={handleStopRecording}
           />
         </View>
-      </View> */}
+      </View>
     </GestureHandlerRootView>
   );
 }
