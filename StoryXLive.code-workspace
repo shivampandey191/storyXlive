@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "StoryXLive",
+			"path": "."
+		},
+		{
+			"name": "hooks",
+			"path": "../../../Downloads/project/hooks"
+		}
+	],
+	"settings": {}
+}
