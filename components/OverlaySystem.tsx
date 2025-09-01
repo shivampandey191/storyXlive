@@ -28,9 +28,10 @@ const { width, height } = Dimensions.get("window");
 
 interface OverlaySystemProps {
   onClose: () => void;
+  onOverlaysChange?: (overlays: OverlayItem[]) => void;
 }
 
-interface OverlayItem {
+export interface OverlayItem {
   id: string;
   type: "emoji" | "text";
   content: string;
@@ -43,9 +44,18 @@ interface OverlayItem {
 const EMOJIS = ["😎", "🔥", "❤️", "🎉", "✨", "🚀", "💯", "🌟"];
 const SAMPLE_TEXTS = ["Hello!", "Amazing!", "Wow!", "Cool!", "Epic!"];
 
-export default function OverlaySystem({ onClose }: OverlaySystemProps) {
+export default function OverlaySystem({
+  onClose,
+  onOverlaysChange,
+}: OverlaySystemProps) {
   const [overlays, setOverlays] = useState<OverlayItem[]>([]);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  // Notify parent of overlay changes
+  React.useEffect(() => {
+    if (typeof onOverlaysChange === "function") {
+      onOverlaysChange(overlays);
+    }
+  }, [overlays, onOverlaysChange]);
 
   const menuScale = useSharedValue(0);
   const menuOpacity = useSharedValue(0);
@@ -314,7 +324,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 2,
+    zIndex: 0, // Lower zIndex so controls are clickable
+    pointerEvents: "box-none", // Allow touches to pass through except on overlays
   },
   overlayContainer: {
     position: "absolute",

@@ -1,10 +1,14 @@
+import type { OverlayItem } from "@/components/OverlaySystem";
+import OverlaySystem from "@/components/OverlaySystem";
 import RecordingControls from "@/components/RecordingControls";
 import FFmpegModule from "@/specs/NativeFFmpegModule";
 import { saveVideoToGallery } from "@/utils/videoProcessing";
+import { Asset } from "expo-asset";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as MediaLibrary from "expo-media-library";
 import { StatusBar } from "expo-status-bar";
+import * as VideoThumbnails from "expo-video-thumbnails";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -21,7 +25,6 @@ import {
   useCameraDevice,
   useCameraPermission,
 } from "react-native-vision-camera";
-import * as VideoThumbnails from "expo-video-thumbnails";
 
 const { width, height } = Dimensions.get("window");
 
@@ -29,6 +32,7 @@ export default function HomeScreen() {
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const [overlays, setOverlays] = useState<OverlayItem[]>([]); // Overlay state for video overlays
 
   const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice("back");
@@ -137,21 +141,72 @@ export default function HomeScreen() {
             const muteSuccess = FFmpegModule.muteVideo(trimmedPath, mutedPath);
             if (!muteSuccess) throw new Error("Muting failed");
 
-            // Step 3: Save to gallery
-            await saveVideoToGallery(mutedPath);
+            // Ensure font is present in cache directory before calling native
+            const overlayedPath = `${
+              FileSystem.cacheDirectory
+            }overlayed_${Date.now()}.mp4`;
+            const overlaysJson = JSON.stringify(overlays);
+            const workDir =
+              FileSystem.cacheDirectory?.replace("file://", "") ||
+              "/data/data/com.storyxlive/cache/";
+            const fontDest =
+              FileSystem.cacheDirectory + "SpaceMono-Regular.ttf";
+            let fontInfo = await FileSystem.getInfoAsync(fontDest);
+            if (!fontInfo.exists) {
+              // Use Expo Asset API for robust font copying
+              const fontAsset = Asset.fromModule(
+                require("../assets/fonts/SpaceMono-Regular.ttf")
+              );
+              await fontAsset.downloadAsync();
+              try {
+                await FileSystem.copyAsync({
+                  from: fontAsset.localUri!,
+                  to: fontDest,
+                });
+                console.log("Font copied to cache:", fontDest);
+              } catch (e) {
+                console.log("Font copy failed:", e);
+              }
+              fontInfo = await FileSystem.getInfoAsync(fontDest);
+            }
+            console.log("Font exists in cache:", fontInfo.exists, fontDest);
+            const burnSuccess = FFmpegModule.burnOverlays(
+              mutedPath,
+              overlayedPath,
+              overlaysJson,
+              workDir
+            );
+            if (!burnSuccess) {
+              Alert.alert(
+                "Overlay Burn-in Failed",
+                `Overlay burn-in failed.\n\nOverlays: ${overlaysJson}`
+              );
+              throw new Error("Overlay burn-in failed");
+            }
 
-            // Step 4: Generate thumbnail
+            // Step 4: Save to gallery
+            await saveVideoToGallery(overlayedPath);
+
+            // Step 5: Generate thumbnail
             const { uri: thumbnailUri } =
-              await VideoThumbnails.getThumbnailAsync(mutedPath, { time: 0 });
+              await VideoThumbnails.getThumbnailAsync(overlayedPath, {
+                time: 0,
+              });
 
             Alert.alert(
               "Success",
-              "Video processed, saved, and thumbnail generated!"
+              "Video processed, overlays burned, saved, and thumbnail generated!"
             );
             // Optionally, set state to show thumbnailUri
           } catch (err) {
             console.error("Video processing error:", err);
-            Alert.alert("Error", "Failed to process video");
+            let message = "Failed to process video";
+            if (err instanceof Error) {
+              message = err.message;
+            } else if (typeof err === "string") {
+              message = err;
+            }
+            Alert.alert("Error", message);
           } finally {
             setIsRecording(false);
           }
@@ -202,18 +257,6 @@ export default function HomeScreen() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <StatusBar style="light" />
-      {/* <View style={{ padding: 30 }}>
-        <Text style={{ fontSize: 30, color: "red" }}>
-          {FFmpegModule.getFFmpegVersion()}
-        </Text>
-      </View>
-      <TouchableOpacity
-        onPress={pickVideo}
-        style={{ backgroundColor: "blue", padding: 10 }}
-        y
-      >
-        <Text>Pick Video</Text>
-      </TouchableOpacity> */}
       <View style={styles.cameraContainer}>
         {hasPermission && device && (
           <Camera
@@ -231,12 +274,13 @@ export default function HomeScreen() {
             onError={(error) => {
               console.error("Camera error:", error);
               setIsCameraReady(false);
-              // Try to recover by toggling active state
               setIsActive(false);
               setTimeout(() => setIsActive(true), 1000);
             }}
           />
         )}
+        {/* OverlaySystem overlays UI, pass setOverlays to receive overlay state */}
+        <OverlaySystem onClose={() => {}} onOverlaysChange={setOverlays} />
         <View style={styles.controlsContainer}>
           <RecordingControls
             isRecording={isRecording}

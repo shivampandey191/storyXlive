@@ -11,6 +11,12 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 
 import expo.modules.ReactActivityDelegateWrapper
 
+import android.content.Context
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStream
+
 class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
@@ -20,7 +26,32 @@ class MainActivity : ReactActivity() {
     // @generated begin expo-splashscreen - expo prebuild (DO NOT MODIFY) sync-f3ff59a738c56c9a6119210cb55f0b613eb8b6af
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
+    copyFfmpegBinaryIfNeeded()
     super.onCreate(null)
+  }
+
+  private fun copyFfmpegBinaryIfNeeded() {
+    val ffmpegFile = File(filesDir, "ffmpeg")
+    if (!ffmpegFile.exists()) {
+      try {
+        assets.open("ffmpeg").use { inputStream ->
+          FileOutputStream(ffmpegFile).use { outputStream ->
+            val buffer = ByteArray(4096)
+            var bytesRead: Int
+            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+              outputStream.write(buffer, 0, bytesRead)
+            }
+            outputStream.flush()
+          }
+        }
+        // Set executable for all users
+        ffmpegFile.setExecutable(true, false)
+      } catch (e: IOException) {
+        e.printStackTrace()
+      }
+    }
+    // Log file existence and permissions
+    android.util.Log.e("FFmpegCopy", "ffmpeg exists: ${ffmpegFile.exists()}, canExecute: ${ffmpegFile.canExecute()}, path: ${ffmpegFile.absolutePath}")
   }
 
   /**
