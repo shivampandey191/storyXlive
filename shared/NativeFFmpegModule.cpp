@@ -1,6 +1,22 @@
+
 #include "NativeFFmpegModule.h"
 #include <android/log.h>
 #include <sstream>
+
+// FFmpeg includes (ensure all needed are present)
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
+#include <libavutil/opt.h>
+#include <libavutil/imgutils.h>
+#include <libavutil/pixdesc.h>
+#include <libavutil/mathematics.h>
+#include <libavutil/timestamp.h>
+#include <libswscale/swscale.h>
+}
 
 namespace facebook::react {
 
@@ -184,30 +200,66 @@ end:
 }
 
 bool NativeFFmpegModule::burnOverlays(jsi::Runtime& rt, std::string inputPath, std::string outputPath, std::string overlaysJson, std::string workDir) {
-    // Logcat: entry and all key steps
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "burnOverlays called");
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "workDir: %s", workDir.c_str());
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "inputPath: %s", inputPath.c_str());
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "outputPath: %s", outputPath.c_str());
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "overlaysJson: %s", overlaysJson.c_str());
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "burnOverlays: entered");
 
-    std::string fontPath = workDir + "/SpaceMono-Regular.ttf";
-    FILE* fontTest = fopen(fontPath.c_str(), "r");
-    if (!fontTest) {
-        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Font file not found: %s", fontPath.c_str());
-        fontPath = "";
-    } else {
-        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Font file found: %s", fontPath.c_str());
-        fclose(fontTest);
+    // --- FFmpeg C API overlay scaffold ---
+    // 1. Open input file
+    AVFormatContext* fmt_ctx = nullptr;
+    if (avformat_open_input(&fmt_ctx, inputPath.c_str(), nullptr, nullptr) < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to open input: %s", inputPath.c_str());
+        return false;
     }
-    // Remove file:// prefix if present
-    if (inputPath.rfind("file://", 0) == 0) inputPath = inputPath.substr(7);
-    if (outputPath.rfind("file://", 0) == 0) outputPath = outputPath.substr(7);
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Input opened: %s", inputPath.c_str());
+    if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) {
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to find stream info");
+        return false;
+    }
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Stream info found");
+    int video_stream_index = -1;
+    for (unsigned int i = 0; i < fmt_ctx->nb_streams; i++) {
+        if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            video_stream_index = i;
+            break;
+        }
+    }
+    if (video_stream_index == -1) {
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "No video stream found");
+        return false;
+    }
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Video stream index: %d", video_stream_index);
 
-    // Use workDir for font and logs (ensure font is copied to workDir/SpaceMono-Regular.ttf)
+    // 2. Set up decoder
+    const AVCodec* dec = avcodec_find_decoder(fmt_ctx->streams[video_stream_index]->codecpar->codec_id);
+    if (!dec) {
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Decoder not found");
+        avformat_close_input(&fmt_ctx);
+        return false;
+    }
+    AVCodecContext* dec_ctx = avcodec_alloc_context3(dec);
+    if (!dec_ctx) {
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to alloc decoder context");
+        avformat_close_input(&fmt_ctx);
+        return false;
+    }
+    if (avcodec_parameters_to_context(dec_ctx, fmt_ctx->streams[video_stream_index]->codecpar) < 0) {
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to copy codec params to context");
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return false;
+    }
+    if (avcodec_open2(dec_ctx, dec, nullptr) < 0) {
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to open decoder");
+        return false;
+    }
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Decoder opened");
+
+    // 3. Build filter string from overlaysJson (reuse your logic)
+    std::string fontPath = workDir + "/SpaceMono-Regular.ttf";
     std::vector<std::string> filterParts;
-    // (Removed duplicate fontPath/fontTest definition)
-
     try {
         size_t pos = 0;
         while ((pos = overlaysJson.find("{", pos)) != std::string::npos) {
@@ -234,25 +286,49 @@ bool NativeFFmpegModule::burnOverlays(jsi::Runtime& rt, std::string inputPath, s
             std::string x = getVal("x");
             std::string y = getVal("y");
             std::string scale = getVal("scale");
-            std::string rotation = getVal("rotation");
             if ((type == "emoji" || type == "text") && !fontPath.empty()) {
+                // Clean up font path (remove double slashes)
+                std::string cleanFontPath = fontPath;
+                while (cleanFontPath.find("//") != std::string::npos) {
+                    cleanFontPath.replace(cleanFontPath.find("//"), 2, "/");
+                }
                 std::ostringstream f;
                 f << "drawtext=text='" << content << "'";
-                f << ":x=" << (x.empty() ? "0" : x);
-                f << ":y=" << (y.empty() ? "0" : y);
+                // Cast x/y to int for FFmpeg drawtext
+                if (x.empty()) {
+                    f << ":x=0";
+                } else {
+                    try {
+                        f << ":x=" << std::to_string(static_cast<int>(std::stof(x)));
+                    } catch (...) {
+                        f << ":x=0";
+                    }
+                }
+                if (y.empty()) {
+                    f << ":y=0";
+                } else {
+                    try {
+                        f << ":y=" << std::to_string(static_cast<int>(std::stof(y)));
+                    } catch (...) {
+                        f << ":y=0";
+                    }
+                }
                 f << ":fontsize=" << (scale.empty() ? "40" : std::to_string((int)(std::stof(scale)*40)));
                 f << ":fontcolor=white";
-                f << ":fontfile='" << fontPath << "'";
+                f << ":fontfile='" << cleanFontPath << "'";
                 filterParts.push_back(f.str());
-                __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Added overlay: %s", f.str().c_str());
             }
             pos = end+1;
         }
     } catch (...) {
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
         __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Overlay JSON parse error");
         return false;
     }
     if (filterParts.empty()) {
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
         __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "No overlays or font not found");
         return false;
     }
@@ -261,22 +337,201 @@ bool NativeFFmpegModule::burnOverlays(jsi::Runtime& rt, std::string inputPath, s
         if (i > 0) filter << ",";
         filter << filterParts[i];
     }
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "FFmpeg filter: %s", filter.str().c_str());
-    std::string ffmpegPath = "/data/data/com.anonymous.StoryXLive/files/ffmpeg";
-    if (access(ffmpegPath.c_str(), X_OK) != 0) {
-        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "ffmpeg binary not executable or not found at: %s", ffmpegPath.c_str());
+
+    // 4. Set up filter graph
+    AVFilterGraph* filter_graph = avfilter_graph_alloc();
+    AVFilterContext* buffersrc_ctx = nullptr;
+    AVFilterContext* buffersink_ctx = nullptr;
+    char args[512];
+    snprintf(args, sizeof(args),
+        "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+        dec_ctx->width, dec_ctx->height, dec_ctx->pix_fmt,
+        fmt_ctx->streams[video_stream_index]->time_base.num,
+        fmt_ctx->streams[video_stream_index]->time_base.den,
+        dec_ctx->sample_aspect_ratio.num, dec_ctx->sample_aspect_ratio.den);
+    avfilter_graph_create_filter(&buffersrc_ctx, avfilter_get_by_name("buffer"), "in", args, nullptr, filter_graph);
+    avfilter_graph_create_filter(&buffersink_ctx, avfilter_get_by_name("buffersink"), "out", nullptr, nullptr, filter_graph);
+    AVFilterInOut* outputs = avfilter_inout_alloc();
+    AVFilterInOut* inputs  = avfilter_inout_alloc();
+    outputs->name       = av_strdup("in");
+    outputs->filter_ctx = buffersrc_ctx;
+    outputs->pad_idx    = 0;
+
+    // Log the filter string before parsing
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Filter string: %s", filter.str().c_str());
+    outputs->next       = nullptr;
+    inputs->name        = av_strdup("out");
+    inputs->filter_ctx  = buffersink_ctx;
+    inputs->pad_idx     = 0;
+    inputs->next        = nullptr;
+    int parse_ret = avfilter_graph_parse_ptr(filter_graph, filter.str().c_str(), &inputs, &outputs, nullptr);
+    if (parse_ret < 0) {
+        char errbuf[256];
+        av_strerror(parse_ret, errbuf, sizeof(errbuf));
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to parse filter graph: %s", errbuf);
+        avfilter_inout_free(&inputs);
+        avfilter_inout_free(&outputs);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        return false;
     }
-    std::ostringstream cmd;
-    std::string logPath = workDir + "/ffmpeg_overlay_cmd.log";
-    std::string errPath = workDir + "/ffmpeg_overlay_stderr.log";
-    cmd << ffmpegPath << " -y -i '" << inputPath << "' -vf \"" << filter.str() << "\" -codec:a copy '" << outputPath << "' 2>" << errPath;
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "FFmpeg command: %s", cmd.str().c_str());
-    int sysret = system(cmd.str().c_str());
-    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "FFmpeg system() returned: %d", sysret);
-    if (sysret != 0) {
-        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "FFmpeg command failed");
+    if (avfilter_graph_config(filter_graph, nullptr) < 0) {
+        avfilter_inout_free(&inputs);
+        avfilter_inout_free(&outputs);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to config filter graph");
+        return false;
     }
-    return sysret == 0;
+    avfilter_inout_free(&inputs);
+    avfilter_inout_free(&outputs);
+
+    // 5. Read, filter, encode, and mux frames (video only)
+    AVFormatContext* out_fmt_ctx = nullptr;
+    AVStream* out_stream = nullptr;
+    const AVCodec* enc = nullptr;
+    AVCodecContext* enc_ctx = nullptr;
+    int ret = 0;
+
+    // Create output context
+    avformat_alloc_output_context2(&out_fmt_ctx, nullptr, nullptr, outputPath.c_str());
+    if (!out_fmt_ctx) {
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to alloc output context");
+        return false;
+    }
+    // Add video stream to output
+    enc = avcodec_find_encoder(dec_ctx->codec_id);
+    if (!enc) {
+        avformat_free_context(out_fmt_ctx);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Encoder not found");
+        return false;
+    }
+    out_stream = avformat_new_stream(out_fmt_ctx, enc);
+    if (!out_stream) {
+        avformat_free_context(out_fmt_ctx);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to create output stream");
+        return false;
+    }
+    enc_ctx = avcodec_alloc_context3(enc);
+    enc_ctx->height = dec_ctx->height;
+    enc_ctx->width = dec_ctx->width;
+    enc_ctx->sample_aspect_ratio = dec_ctx->sample_aspect_ratio;
+    // Use decoder's pixel format to avoid deprecated pix_fmts
+    enc_ctx->pix_fmt = dec_ctx->pix_fmt;
+    enc_ctx->time_base = dec_ctx->time_base;
+    if (out_fmt_ctx->oformat->flags & AVFMT_GLOBALHEADER)
+        enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    if (avcodec_open2(enc_ctx, enc, nullptr) < 0) {
+        avcodec_free_context(&enc_ctx);
+        avformat_free_context(out_fmt_ctx);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to open encoder");
+        return false;
+    }
+    ret = avcodec_parameters_from_context(out_stream->codecpar, enc_ctx);
+    if (ret < 0) {
+        avcodec_free_context(&enc_ctx);
+        avformat_free_context(out_fmt_ctx);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to copy encoder params");
+        return false;
+    }
+    // Open output file
+    if (!(out_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+        if (avio_open(&out_fmt_ctx->pb, outputPath.c_str(), AVIO_FLAG_WRITE) < 0) {
+            avcodec_free_context(&enc_ctx);
+            avformat_free_context(out_fmt_ctx);
+            avfilter_graph_free(&filter_graph);
+            avcodec_free_context(&dec_ctx);
+            avformat_close_input(&fmt_ctx);
+            __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to open output file");
+            return false;
+        }
+    }
+    // Write header
+    if (avformat_write_header(out_fmt_ctx, nullptr) < 0) {
+        avio_closep(&out_fmt_ctx->pb);
+        avcodec_free_context(&enc_ctx);
+        avformat_free_context(out_fmt_ctx);
+        avfilter_graph_free(&filter_graph);
+        avcodec_free_context(&dec_ctx);
+        avformat_close_input(&fmt_ctx);
+        __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Failed to write header");
+        return false;
+    }
+
+    // Frame processing loop
+    AVPacket* pkt = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    AVFrame* filt_frame = av_frame_alloc();
+    while (av_read_frame(fmt_ctx, pkt) >= 0) {
+        if (pkt->stream_index == video_stream_index) {
+            ret = avcodec_send_packet(dec_ctx, pkt);
+            if (ret < 0) continue;
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(dec_ctx, frame);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
+                if (ret < 0) break;
+                // Push frame to filter
+                if (av_buffersrc_add_frame(buffersrc_ctx, frame) < 0) break;
+                // Pull filtered frames
+                while (av_buffersink_get_frame(buffersink_ctx, filt_frame) >= 0) {
+                    // Encode filtered frame
+                    ret = avcodec_send_frame(enc_ctx, filt_frame);
+                    if (ret < 0) break;
+                    AVPacket out_pkt = {0};
+                    while (avcodec_receive_packet(enc_ctx, &out_pkt) == 0) {
+                        out_pkt.stream_index = out_stream->index;
+                        av_packet_rescale_ts(&out_pkt, enc_ctx->time_base, out_stream->time_base);
+                        av_interleaved_write_frame(out_fmt_ctx, &out_pkt);
+                        av_packet_unref(&out_pkt);
+                    }
+                    av_frame_unref(filt_frame);
+                }
+                av_frame_unref(frame);
+            }
+        }
+        av_packet_unref(pkt);
+    }
+    // Flush encoder
+    avcodec_send_frame(enc_ctx, nullptr);
+    AVPacket out_pkt = {0};
+    while (avcodec_receive_packet(enc_ctx, &out_pkt) == 0) {
+        out_pkt.stream_index = out_stream->index;
+        av_packet_rescale_ts(&out_pkt, enc_ctx->time_base, out_stream->time_base);
+        av_interleaved_write_frame(out_fmt_ctx, &out_pkt);
+        av_packet_unref(&out_pkt);
+    }
+    av_write_trailer(out_fmt_ctx);
+
+    // Cleanup
+    av_frame_free(&frame);
+    av_frame_free(&filt_frame);
+    av_packet_free(&pkt);
+    if (!(out_fmt_ctx->oformat->flags & AVFMT_NOFILE))
+        avio_closep(&out_fmt_ctx->pb);
+    avcodec_free_context(&enc_ctx);
+    avformat_free_context(out_fmt_ctx);
+    avfilter_graph_free(&filter_graph);
+    avcodec_free_context(&dec_ctx);
+    avformat_close_input(&fmt_ctx);
+    __android_log_print(ANDROID_LOG_ERROR, "FFmpegModule", "Overlay C API: Success");
+    return true;
 }
 
 }

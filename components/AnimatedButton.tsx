@@ -4,7 +4,6 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withSequence,
   runOnJS,
   withTiming,
 } from 'react-native-reanimated';
@@ -32,7 +31,6 @@ export default function AnimatedButton({
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
 
-  // Enhanced gesture handling with Gesture Handler 2.28.0
   const tapGesture = Gesture.Tap()
     .onBegin(() => {
       scale.value = withSpring(scaleValue, springConfig);

@@ -7,7 +7,6 @@ import Animated, {
   withRepeat,
   withTiming,
   withSequence,
-  interpolate,
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -42,7 +41,6 @@ export default function FloatingActionButton({
     }
   }, [pulseAnimation]);
 
-  // Enhanced tap gesture with Gesture Handler 2.28.0
   const tapGesture = Gesture.Tap()
     .onBegin(() => {
       scale.value = withSpring(0.9, { damping: 15, stiffness: 400 });

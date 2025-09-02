@@ -27,26 +27,20 @@ class VideoProcessor {
    */
   static async processVideo(videoUri: string): Promise<string> {
     try {
-      // Create a new filename for the processed video
       const timestamp = Date.now();
       const newFileName = `processed_${timestamp}.mp4`;
       const processedUri = `${FileSystem.cacheDirectory}${newFileName}`;
 
-      // Copy the video file to the new location
       await FileSystem.copyAsync({
         from: videoUri,
         to: processedUri,
       });
 
-      // Load the video and get its status
       const { status } = await Video.createAsync(
         { uri: processedUri },
         { progressUpdateIntervalMillis: 1000 },
         false
       );
-
-      // We can't directly modify the video file with Expo,
-      // but we can provide the trimming information to the player
       return processedUri;
     } catch (error) {
       console.error("Failed to process video:", error);

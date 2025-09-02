@@ -21,8 +21,6 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-const { width } = Dimensions.get("window");
-
 interface RecordingControlsProps {
   isRecording: boolean;
   onRecordPress: () => void;
@@ -43,12 +41,10 @@ export default function RecordingControls({
   const recordingRingScale = useSharedValue(0);
   const timerCount = useSharedValue(5);
 
-  // Enhanced recording animations with Reanimated 4.0.3
   useAnimatedReaction(
     () => isRecording,
     (recording) => {
       if (recording) {
-        // Recording started animations
         recordingPulse.value = withRepeat(
           withSequence(
             withTiming(1.2, { duration: 600 }),
@@ -70,22 +66,18 @@ export default function RecordingControls({
           stiffness: 300,
         });
 
-        // Reset and start timer countdown
         timerCount.value = 5;
-        const countdownDuration = 1000; // 1 second per count
-
-        // Create a sequence of timing animations for each second
+        const countdownDuration = 1000; 
         for (let i = 4; i >= 0; i--) {
           timerCount.value = withDelay(
             (5 - i - 1) * countdownDuration,
             withTiming(i, {
               duration: countdownDuration,
-              easing: (x) => x, // Linear easing
+              easing: (x) => x, 
             })
           );
         }
       } else {
-        // Recording stopped animations
         recordingPulse.value = withSpring(1, { damping: 15, stiffness: 300 });
         recordingRingScale.value = withTiming(0, { duration: 200 });
         timerOpacity.value = withTiming(0, { duration: 200 });
@@ -99,7 +91,6 @@ export default function RecordingControls({
     }
   );
 
-  // Separate timer reaction for handling completion
   useAnimatedReaction(
     () => timerCount.value,
     (count) => {
@@ -132,10 +123,6 @@ export default function RecordingControls({
     ],
   }));
 
-  const sideButtonsAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: sideButtonsScale.value }],
-  }));
-
   const recordingRingAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: recordingRingScale.value }],
     opacity: recordingRingScale.value,
@@ -144,14 +131,6 @@ export default function RecordingControls({
   return (
     <View style={styles.container}>
       <View style={styles.controlsRow}>
-        {/* Gallery Button */}
-        <Animated.View style={sideButtonsAnimatedStyle}>
-          <TouchableOpacity style={styles.sideButton} activeOpacity={0.7}>
-            <View style={styles.galleryPreview} />
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Record Button */}
         <Animated.View
           style={[styles.recordButtonContainer, recordButtonAnimatedStyle]}
         >
@@ -179,30 +158,12 @@ export default function RecordingControls({
             )}
           </TouchableOpacity>
         </Animated.View>
-
-        {/* Settings Button */}
-        <Animated.View style={sideButtonsAnimatedStyle}>
-          <TouchableOpacity style={styles.sideButton} activeOpacity={0.7}>
-            <View style={styles.settingsIcon}>
-              <View style={styles.settingsDot} />
-              <View style={styles.settingsDot} />
-              <View style={styles.settingsDot} />
-            </View>
-          </TouchableOpacity>
-        </Animated.View>
       </View>
 
-      {/* Recording Timer */}
       <Animated.View style={[styles.timerContainer, timerAnimatedStyle]}>
-        <Animated.View style={recordingPulseStyle}>
-          <Animated.Text style={styles.timerText}>
-            {Math.round(timerCount.value)}
-          </Animated.Text>
-        </Animated.View>
         <Text style={styles.timerLabel}>Recording...</Text>
       </Animated.View>
 
-      {/* Instructions */}
       <Animated.View
         style={[styles.instructionsContainer, instructionsAnimatedStyle]}
       >
@@ -223,7 +184,7 @@ const styles = StyleSheet.create({
   controlsRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "center",
     width: "100%",
     marginBottom: 20,
   },

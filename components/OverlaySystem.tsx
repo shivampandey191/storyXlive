@@ -50,14 +50,12 @@ export default function OverlaySystem({
 }: OverlaySystemProps) {
   const [overlays, setOverlays] = useState<OverlayItem[]>([]);
   const [showAddMenu, setShowAddMenu] = useState(false);
-  // Notify parent of overlay changes
   React.useEffect(() => {
     if (typeof onOverlaysChange === "function") {
       onOverlaysChange(overlays);
     }
   }, [overlays, onOverlaysChange]);
 
-  const menuScale = useSharedValue(0);
   const menuOpacity = useSharedValue(0);
   const addButtonRotation = useSharedValue(0);
 
@@ -70,16 +68,10 @@ export default function OverlaySystem({
     setShowAddMenu(newShowState);
 
     if (newShowState) {
-      // Enhanced menu entrance animation
       addButtonRotation.value = withSpring(45, { damping: 15, stiffness: 300 });
-      menuScale.value = withSequence(
-        withTiming(0.8, { duration: 100 }),
-        withSpring(1, { damping: 12, stiffness: 400 })
-      );
       menuOpacity.value = withTiming(1, { duration: 200 });
     } else {
       addButtonRotation.value = withSpring(0, { damping: 15, stiffness: 300 });
-      menuScale.value = withTiming(0, { duration: 150 });
       menuOpacity.value = withTiming(0, { duration: 150 });
     }
   };
@@ -107,7 +99,6 @@ export default function OverlaySystem({
   };
 
   const menuAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: menuScale.value }],
     opacity: menuOpacity.value,
   }));
 
@@ -117,7 +108,6 @@ export default function OverlaySystem({
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      {/* Overlay Items */}
       {overlays.map((overlay) => (
         <OverlayItem
           key={overlay.id}
@@ -133,7 +123,6 @@ export default function OverlaySystem({
         />
       ))}
 
-      {/* Add Button */}
       <TouchableOpacity
         style={styles.addButton}
         onPress={toggleAddMenu}
@@ -144,7 +133,6 @@ export default function OverlaySystem({
         </Animated.View>
       </TouchableOpacity>
 
-      {/* Add Menu */}
       {showAddMenu && (
         <Animated.View style={[styles.addMenu, menuAnimatedStyle]}>
           <View style={styles.menuSection}>
@@ -205,11 +193,9 @@ function OverlayItem({ overlay, onRemove, onUpdate }: OverlayItemProps) {
   const rotation = useSharedValue(overlay.rotation);
   const [showRemoveButton, setShowRemoveButton] = useState(false);
 
-  // Enhanced animations for interactions
   const itemScale = useSharedValue(1);
   const itemOpacity = useSharedValue(1);
 
-  // Gesture Handler 2.28.0 new API
   const panGesture = Gesture.Pan()
     .onStart(() => {
       runOnJS(setShowRemoveButton)(true);
@@ -261,7 +247,6 @@ function OverlayItem({ overlay, onRemove, onUpdate }: OverlayItemProps) {
       });
     });
 
-  // Compose gestures with new API
   const composedGesture = Gesture.Simultaneous(
     panGesture,
     Gesture.Simultaneous(pinchGesture, rotationGesture)
@@ -277,7 +262,6 @@ function OverlayItem({ overlay, onRemove, onUpdate }: OverlayItemProps) {
     opacity: itemOpacity.value,
   }));
 
-  // Entrance animation
   React.useEffect(() => {
     itemOpacity.value = 0;
     itemScale.value = 0;
@@ -324,8 +308,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 0, // Lower zIndex so controls are clickable
-    pointerEvents: "box-none", // Allow touches to pass through except on overlays
+    zIndex: 0, 
+    pointerEvents: "box-none"
   },
   overlayContainer: {
     position: "absolute",
