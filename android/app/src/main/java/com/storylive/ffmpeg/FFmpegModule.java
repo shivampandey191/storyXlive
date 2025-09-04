@@ -1,3 +1,4 @@
+ 
 
 package com.storylive.ffmpeg;
 
@@ -15,7 +16,7 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-// FFmpegKit imports
+// FFmpegKit importssca
 import com.arthenica.ffmpegkit.FFmpegKit;
 import com.arthenica.ffmpegkit.Session;
 import com.arthenica.ffmpegkit.ReturnCode;
@@ -47,13 +48,23 @@ public class FFmpegModule extends ReactContextBaseJavaModule {
     public void trimVideoAndMute(String inputPath, String outputPath, int startTime, int duration, Promise promise) {
         executorService.execute(() -> {
             try {
-                // FFmpeg command to trim video and mute audio
-                String command = String.format("-i %s -ss %d -t %d -c:v copy -an %s",
-                    inputPath,    // Input file
-                    startTime,    // Start time in seconds
-                    duration,     // Duration in seconds
-                    outputPath    // Output file
-                );
+                    // FFmpeg command to mute audio for full video or trim and mute
+                    String command;
+                    if (duration == 0) {
+                        // Mute whole video
+                        command = String.format("-i %s -c:v copy -an %s",
+                            inputPath,
+                            outputPath
+                        );
+                    } else {
+                        // Trim and mute
+                        command = String.format("-i %s -ss %d -t %d -c:v copy -an %s",
+                            inputPath,
+                            startTime,
+                            duration,
+                            outputPath
+                        );
+                    }
 
                 Session session = FFmpegKit.execute(command);
                 if (ReturnCode.isSuccess(session.getReturnCode())) {
@@ -138,6 +149,30 @@ public class FFmpegModule extends ReactContextBaseJavaModule {
                 Session session = FFmpegKit.execute(command);
                 if (ReturnCode.isSuccess(session.getReturnCode())) {
                     promise.resolve("Video trimmed successfully");
+                } else {
+                    promise.reject("FFMPEG_ERROR", "FFmpeg process failed with rc=" + session.getReturnCode());
+                }
+            } catch (Exception e) {
+                promise.reject("FFMPEG_ERROR", e.getMessage());
+            }
+        });
+    }
+
+    @ReactMethod
+    public void trimAndReencode(String inputPath, String outputPath, int startTime, int duration, Promise promise) {
+        executorService.execute(() -> {
+            try {
+                // Robust trim: decode, trim, and re-encode using H.264 for maximum compatibility
+                String command = String.format(
+                    "-y -i %s -ss %d -t %d -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k %s",
+                    inputPath,
+                    startTime,
+                    duration,
+                    outputPath
+                );
+                Session session = FFmpegKit.execute(command);
+                if (ReturnCode.isSuccess(session.getReturnCode())) {
+                    promise.resolve("Video trimmed and re-encoded successfully");
                 } else {
                     promise.reject("FFMPEG_ERROR", "FFmpeg process failed with rc=" + session.getReturnCode());
                 }

@@ -122,12 +122,6 @@ android {
             crunchPngs (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
         }
     }
-    externalNativeBuild {
-        cmake {
-           path "src/main/jni/CMakeLists.txt"
-           version "3.22.1"
-        }
-    }
     packagingOptions {
         jniLibs {
             useLegacyPackaging (findProperty('expo.useLegacyPackaging')?.toBoolean() ?: false)
@@ -160,7 +154,9 @@ android {
 
 dependencies {
     // FFmpegKit local AAR for video processing
-    implementation(name: 'ffmpeg-kit-full-6.0.2', ext: 'aar')
+    // implementation(name: 'ffmpeg-kit-full-6.0.2', ext: 'aar')
+    implementation(name: 'ffmpeg-kit-full-gpl-6.0-2.LTS', ext: 'aar')
+    implementation 'com.arthenica:smart-exception-java:0.2.1'
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 

@@ -66,7 +66,7 @@ This project uses a custom C++ TurboModule (`NativeFFmpegModule`) to call FFmpeg
 
 ## Credits
 
-- Built by Shivam Pandey for demo/assignment purposes.
+- Built by Shivam Pandey.
 - FFmpeg (https://ffmpeg.org/)
 
 ---

@@ -1,9 +1,10 @@
 import type { OverlayItem } from "@/components/OverlaySystem";
 import OverlaySystem from "@/components/OverlaySystem";
 import RecordingControls from "@/components/RecordingControls";
-import FFmpegModule from "@/specs/NativeFFmpegModule";
+import { burnOverlays, muteVideo, trimVideo } from "@/utils/FFmpeg";
 import { saveVideoToGallery } from "@/utils/videoProcessing";
 import { Asset } from "expo-asset";
+import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as MediaLibrary from "expo-media-library";
@@ -29,14 +30,20 @@ import {
 const { width, height } = Dimensions.get("window");
 
 export default function HomeScreen() {
+  // Timer ref for auto-stop
+  const autoStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [overlays, setOverlays] = useState<OverlayItem[]>([]); // Overlay state for video overlays
+  // Remove hasReceivedFrame, use minimum recording time instead
+  const [recordingStartTime, setRecordingStartTime] = useState<number | null>(
+    null
+  );
 
   const cameraRef = useRef<Camera>(null);
   const device = useCameraDevice("back");
-  const { hasPermission } = useCameraPermission();
+  const { hasPermission, requestPermission } = useCameraPermission();
 
   const recordButtonScale = useSharedValue(1);
 
@@ -44,6 +51,13 @@ export default function HomeScreen() {
 
   useEffect(() => {
     (async () => {
+      if (!hasPermission) {
+        await requestPermission();
+      }
+      const { status: micStatus } = await Audio.requestPermissionsAsync();
+      if (micStatus !== "granted") {
+        alert("Microphone permission is required for recording audio!");
+      }
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== "granted") {
         alert("Permission to access media library is required!");
@@ -51,39 +65,19 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // const pickVideo = async () => {
-  //   // Get all videos from media library
-  //   const media = await MediaLibrary.getAssetsAsync({
-  //     mediaType: MediaLibrary.MediaType.video,
-  //     first: 1, // limit to 1 for demo
-  //     sortBy: [[MediaLibrary.SortBy.creationTime, false]], // latest video
-  //   });
-
-  //   if (media.assets.length > 0) {
-  //     setVideo(media.assets[0]);
-  //     console.log("video data---", media.assets[0]); // pick the first video
-  //     console.log(
-  //       "video data---",
-  //       FFmpegModule.getVideoMetaData(media.assets[0].uri)
-  //     ); // pick the first video
-  //   }
-  // };
-
-  // Handle app state changes
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
-      console.log("App state changed to:", nextAppState);
       if (nextAppState === "active") {
-        // App came to foreground
-        console.log("App is active, enabling camera...");
         setIsActive(true);
         setIsCameraReady(true);
       } else {
-        // App went to background
-        console.log("App is in background, disabling camera...");
         setIsActive(false);
-        if (isRecording) {
-          // Stop recording if the app goes to background
+        // Only stop recording if at least 1 second has passed
+        if (
+          isRecording &&
+          recordingStartTime &&
+          Date.now() - recordingStartTime >= 1000
+        ) {
           handleStopRecording();
         }
       }
@@ -92,9 +86,15 @@ export default function HomeScreen() {
     return () => {
       subscription.remove();
     };
-  }, [isRecording]);
+  }, [isRecording, recordingStartTime]);
 
   const handleStartRecording = async () => {
+    // Clear any previous timer
+    if (autoStopTimerRef.current) {
+      clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
+    setRecordingStartTime(null); // Reset before starting recording
     if (!cameraRef.current) {
       console.error("Camera ref is null");
       return;
@@ -107,7 +107,6 @@ export default function HomeScreen() {
     }
 
     try {
-      // Check camera state before recording
       if (!device) {
         console.error("No camera device selected");
         return;
@@ -115,31 +114,51 @@ export default function HomeScreen() {
 
       console.log("Camera state check passed, starting recording...");
       setIsRecording(true);
+      setRecordingStartTime(Date.now());
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       await cameraRef.current.startRecording({
         onRecordingFinished: async (video) => {
+          // Clear auto-stop timer
+          if (autoStopTimerRef.current) {
+            clearTimeout(autoStopTimerRef.current);
+            autoStopTimerRef.current = null;
+          }
           try {
-            // Step 1: Trim the first 3 seconds using trimVideo
+            // Trim last 2 seconds: keep first (duration - 2) seconds
             const trimmedPath = `${
               FileSystem.cacheDirectory
             }trimmed_${Date.now()}.mp4`;
-            const start = 3;
-            const duration = Math.max(1, Math.floor(video.duration - 3));
-            const trimSuccess = FFmpegModule.trimVideo(
+            const start = 0;
+            const duration = Math.max(1, Math.round(video.duration - 2));
+            console.log("Original video duration:", video.duration);
+            console.log("Trim start:", start, "duration:", duration);
+            const trimSuccess = await trimVideo(
               video.path,
               trimmedPath,
               start,
               duration
             );
-            if (!trimSuccess) throw new Error("Trimming failed");
+            const trimmedInfo = await FileSystem.getInfoAsync(trimmedPath);
+            console.log("Trimmed file info:", trimmedInfo);
+            if (
+              !trimSuccess ||
+              !trimmedInfo.exists ||
+              trimmedInfo.size < 10000
+            ) {
+              throw new Error("Trimming failed or output file invalid");
+            }
 
-            // Step 2: Mute the trimmed video
+            //Mute the trimmed video
             const mutedPath = `${
               FileSystem.cacheDirectory
             }muted_${Date.now()}.mp4`;
-            const muteSuccess = FFmpegModule.muteVideo(trimmedPath, mutedPath);
-            if (!muteSuccess) throw new Error("Muting failed");
+            const muteSuccess = await muteVideo(trimmedPath, mutedPath);
+            const mutedInfo = await FileSystem.getInfoAsync(mutedPath);
+            console.log("Muted file info:", mutedInfo);
+            if (!muteSuccess || !mutedInfo.exists || mutedInfo.size < 10000) {
+              throw new Error("Muting failed or output file invalid");
+            }
 
             // Ensure font is present in cache directory before calling native
             const overlayedPath = `${
@@ -170,32 +189,50 @@ export default function HomeScreen() {
               fontInfo = await FileSystem.getInfoAsync(fontDest);
             }
             console.log("Font exists in cache:", fontInfo.exists, fontDest);
-            const burnSuccess = FFmpegModule.burnOverlays(
+            const burnSuccess = await burnOverlays(
               mutedPath,
               overlayedPath,
               overlaysJson,
               workDir
             );
-            if (!burnSuccess) {
+            const overlayedInfo = await FileSystem.getInfoAsync(overlayedPath);
+            console.log("Overlayed file info:", overlayedInfo);
+            let finalVideoPath = overlayedPath;
+            let overlayed = true;
+            if (
+              !burnSuccess ||
+              !overlayedInfo.exists ||
+              overlayedInfo.size < 10000
+            ) {
               Alert.alert(
                 "Overlay Burn-in Failed",
-                `Overlay burn-in failed.\n\nOverlays: ${overlaysJson}`
+                `Overlay burn-in failed.\n\nSaving trimmed and muted video instead.\n\nOverlays: ${overlaysJson}`
               );
-              throw new Error("Overlay burn-in failed");
+              finalVideoPath = mutedPath;
+              overlayed = false;
             }
 
-            // Step 4: Save to gallery
-            await saveVideoToGallery(overlayedPath);
+            // Step 4: Save to gallery (either overlayed or just muted/trimmed)
+            const finalInfo = await FileSystem.getInfoAsync(finalVideoPath);
+            console.log("Final video file info:", finalInfo);
+            if (!finalInfo.exists || finalInfo.size < 10000) {
+              throw new Error(
+                "Final video file does not exist or is too small"
+              );
+            }
+            await saveVideoToGallery(finalVideoPath);
 
             // Step 5: Generate thumbnail
             const { uri: thumbnailUri } =
-              await VideoThumbnails.getThumbnailAsync(overlayedPath, {
+              await VideoThumbnails.getThumbnailAsync(finalVideoPath, {
                 time: 0,
               });
 
             Alert.alert(
-              "Success",
-              "Video processed, overlays burned, saved, and thumbnail generated!"
+              overlayed ? "Success" : "Partial Success",
+              overlayed
+                ? "Video processed, overlays burned, saved, and thumbnail generated!"
+                : "Video processed (trimmed and muted), but overlay burn-in failed. Saved and thumbnail generated."
             );
             // Optionally, set state to show thumbnailUri
           } catch (err) {
@@ -212,6 +249,11 @@ export default function HomeScreen() {
           }
         },
         onRecordingError: (error) => {
+          // Clear auto-stop timer
+          if (autoStopTimerRef.current) {
+            clearTimeout(autoStopTimerRef.current);
+            autoStopTimerRef.current = null;
+          }
           console.error("Recording error:", {
             message: error.message,
             code: error.code,
@@ -223,6 +265,13 @@ export default function HomeScreen() {
         flash: "off",
       });
 
+      // Set auto-stop timer for 5 seconds
+      autoStopTimerRef.current = setTimeout(() => {
+        if (isRecording && cameraRef.current) {
+          handleStopRecording();
+        }
+      }, 5000);
+
       console.log("Recording started successfully");
     } catch (error) {
       console.error("Failed to start recording:", error);
@@ -233,12 +282,17 @@ export default function HomeScreen() {
 
   const handleStopRecording = async () => {
     if (!cameraRef.current || !isRecording) return;
-
+    if (!recordingStartTime || Date.now() - recordingStartTime < 1000) {
+      Alert.alert(
+        "Wait",
+        "Recording cannot be stopped until at least 1 second has passed."
+      );
+      return;
+    }
     try {
       // Set recording state first to prevent multiple stop calls
       const wasRecording = isRecording;
       setIsRecording(false);
-
       if (wasRecording) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         await cameraRef.current.stopRecording();
@@ -253,7 +307,6 @@ export default function HomeScreen() {
   const recordButtonAnimatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: recordButtonScale.value }],
   }));
-
   return (
     <GestureHandlerRootView style={styles.container}>
       <StatusBar style="light" />
